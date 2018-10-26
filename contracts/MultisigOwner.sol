@@ -105,6 +105,7 @@ contract MultiSigOwner {
         } 
     }
 
+
     /**
     * @dev Let MultisigOwner contract claim ownership of a claimable contract
     */
@@ -178,6 +179,37 @@ contract MultiSigOwner {
         }    
     }
 
+    function msTransferControllerProxyOwnership(address _newOwner) external onlyOwner returns(bool success) {
+        _initOrSignOwnerAction("msTransferControllerProxyOwnership");
+        if (ownerAction.approveSigs > 1) {
+            OwnedUpgradeabilityProxy(timeLockController).transferProxyOwnership(_newOwner);
+            emit ActionExecuted("msTransferControllerProxyOwnership");
+            _deleteOwnerActon();
+            return true;
+        }
+    }
+
+    function msClaimControllerProxyOwnership() external onlyOwner returns(bool success) {
+        _initOrSignOwnerAction("msClaimControllerProxyOwnership");
+        if (ownerAction.approveSigs > 1) {
+            OwnedUpgradeabilityProxy(timeLockController).claimProxyOwnership();
+            emit ActionExecuted("msClaimControllerProxyOwnership");
+            _deleteOwnerActon();
+            return true;
+        }
+    }
+
+    function msUpgradeControllerProxyImplTo(address _implementation) external onlyOwner returns(bool success) {
+        _initOrSignOwnerAction("msUpgradeControllerProxyImplTo");
+        if (ownerAction.approveSigs > 1) {
+            OwnedUpgradeabilityProxy(timeLockController).upgradeTo(_implementation);
+            emit ActionExecuted("msUpgradeControllerProxyImplTo");
+            _deleteOwnerActon();
+            return true;
+        }
+    }
+
+
     /**
     * @dev Veto the current in flight action. Reverts if no current action
     */
@@ -217,12 +249,28 @@ contract MultiSigOwner {
     in TimeLockController.
     */
 
-    function reclaimEther() external onlyOwner {
-        _signOrExecute("reclaimEther"); 
+    function initialize() external onlyOwner {
+        _signOrExecute("initialize"); 
+    }
+
+    function transferTusdProxyOwnership(address _newOwner) external onlyOwner {
+        _signOrExecute("transferTusdProxyOwnership"); 
+    }
+    
+    function claimTusdProxyOwnership() external onlyOwner {
+        _signOrExecute("claimTusdProxyOwnership"); 
+    }
+
+    function upgradeTusdProxyImplTo(address _implementation) external onlyOwner {
+        _signOrExecute("upgradeTusdProxyImplTo"); 
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
         _signOrExecute("transferOwnership"); 
+    }
+
+    function claimOwnership() external onlyOwner {
+        _signOrExecute("claimOwnership"); 
     }
 
     function setSmallMintThreshold(uint256 _threshold) external onlyOwner {
@@ -297,12 +345,16 @@ contract MultiSigOwner {
         _signOrExecute("setDateTime"); 
     }
 
-    function setDelegatedFrom(address _source) external onlyOwner {
-        _signOrExecute("setDelegatedFrom"); 
-    }
-
     function setTrueUSD(TrueUSD _newContract) external onlyOwner {
         _signOrExecute("setTrueUSD"); 
+    }
+
+    function initializeTrueUSD(uint256 _totalSupply) external onlyOwner {
+        _signOrExecute("initializeTrueUSD"); 
+    }
+
+    function setRegistry(Registry _registry) external onlyOwner {
+        _signOrExecute("setRegistry"); 
     }
 
     function changeTokenName(string _name, string _symbol) external onlyOwner {
@@ -317,11 +369,11 @@ contract MultiSigOwner {
         _signOrExecute("issueClaimOwnership"); 
     }
 
-    function delegateToNewContract(
-        DelegateBurnable _delegate,
+    function claimStorageForProxy(
+        address _delegate,
         Ownable _balanceSheet,
         Ownable _alowanceSheet) external {
-        _signOrExecute("delegateToNewContract"); 
+        _signOrExecute("claimStorageForProxy"); 
     }
 
     function transferChild(Ownable _child, address _newOwner) external onlyOwner {
@@ -378,5 +430,13 @@ contract MultiSigOwner {
 
     function changeStaker(address _newStaker) external onlyOwner {
         _signOrExecute("changeStaker"); 
+    }
+
+    function reclaimEther(address _to) external onlyOwner {
+        _signOrExecute("reclaimEther"); 
+    }
+
+    function reclaimToken(ERC20 _token, address _to) external onlyOwner {
+        _signOrExecute("reclaimToken"); 
     }
 } 

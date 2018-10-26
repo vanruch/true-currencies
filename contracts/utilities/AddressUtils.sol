@@ -12,8 +12,8 @@ contract AddressUtils {
     function cut(bytes32 shiftedAddress) internal pure returns (bytes10 halfOfAddress) {
         assembly {
             let freemem_pointer := mload(0x40)
-            mstore(add(freemem_pointer,0x00), shiftedAddress)
-            halfOfAddress := mload(add(freemem_pointer,0x00))
+            mstore(freemem_pointer, shiftedAddress)
+            halfOfAddress := mload(freemem_pointer)
         }
     }
 } 

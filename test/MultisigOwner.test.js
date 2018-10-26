@@ -10,9 +10,6 @@ const AllowanceSheet = artifacts.require("AllowanceSheet")
 const TimeLockedController = artifacts.require("TimeLockedController")
 const TrueUSDMock = artifacts.require("TrueUSDMock")
 const ForceEther = artifacts.require("ForceEther")
-const DelegateBurnableMock = artifacts.require("DelegateBurnableMock")
-const FaultyDelegateBurnableMock1 = artifacts.require("FaultyDelegateBurnableMock1")
-const FaultyDelegateBurnableMock2 = artifacts.require("FaultyDelegateBurnableMock2")
 const DateTimeMock = artifacts.require("DateTimeMock")
 const MultisigOwner = artifacts.require("MultisigOwner")
 const BasicTokenMock = artifacts.require("BasicTokenMock")
@@ -26,9 +23,11 @@ contract('MultisigOwner', function (accounts) {
         this.registry = await Registry.new({ from: owner1 })
         this.dateTime = await DateTimeMock.new({ from: owner1 })
         this.token = await TrueUSDMock.new(oneHundred, 100*10**18, { from: owner1 })
+        await this.token.initialize(100*10**18, { from: owner1 })
         this.globalPause = await GlobalPause.new({ from: owner1 })
         await this.token.setGlobalPause(this.globalPause.address, { from: owner1 })
         this.controller = await TimeLockedController.new({ from: owner1 })
+        await this.controller.initialize({ from: owner1 })
         await this.controller.setRegistry(this.registry.address, { from: owner1 })
         await this.token.transferOwnership(this.controller.address, { from: owner1 })
         await this.controller.issueClaimOwnership(this.token.address, { from: owner1 })
@@ -38,9 +37,6 @@ contract('MultisigOwner', function (accounts) {
         this.ClaimableContract =await BalanceSheet.new({from: owner1})
         this.balanceSheet = await this.token.balances()
         this.allowanceSheet = await this.token.allowances()
-        this.delegateContract = await DelegateBurnableMock.new({ from: owner1 })
-        this.faultyDelegateContract1 = await FaultyDelegateBurnableMock1.new({ from: owner1 })
-        this.faultyDelegateContract2 = await FaultyDelegateBurnableMock2.new({ from: owner1 })
         await this.registry.setAttribute(oneHundred, "hasPassedKYC/AML", 1, "notes", { from: owner1 })
         await this.registry.setAttribute(approver, "isTUSDMintApprover", 1, "notes", { from: owner1 })
         await this.registry.setAttribute(pauseKey, "isTUSDMintChecker", 1, "notes", { from: owner1 })
@@ -194,14 +190,21 @@ contract('MultisigOwner', function (accounts) {
             await forceEther.destroyAndSend(this.controller.address)
             const controllerInitialBalance = web3.fromWei(web3.eth.getBalance(this.controller.address), 'ether').toNumber()
             const multisigInitialBalance = web3.fromWei(web3.eth.getBalance(this.multisigOwner.address), 'ether').toNumber()
-            await this.multisigOwner.reclaimEther({from: owner1})
-            await this.multisigOwner.reclaimEther({from: owner2})
+            await this.multisigOwner.reclaimEther(this.multisigOwner.address, {from: owner1})
+            await this.multisigOwner.reclaimEther(this.multisigOwner.address, {from: owner2})
             const controllerFinalBalance = web3.fromWei(web3.eth.getBalance(this.controller.address), 'ether').toNumber()
             const multisigFinalBalance = web3.fromWei(web3.eth.getBalance(this.multisigOwner.address), 'ether').toNumber()
             assert.equal(controllerInitialBalance, 10)
             assert.equal(multisigInitialBalance, 0)
             assert.equal(controllerFinalBalance, 0)
             assert.equal(multisigFinalBalance, 10)
+        })
+
+        it('call reclaimToken of timeLockController', async function(){
+            await this.token.transfer(this.controller.address, 40*10**18, { from: oneHundred })
+            await this.multisigOwner.reclaimToken(this.token.address, owner1, { from: owner1 })
+            await this.multisigOwner.reclaimToken(this.token.address, owner1, { from: owner2 })
+            await assertBalance(this.token, owner1, 40*10**18)
         })
 
         it('function should fail if controller call fails', async function(){
@@ -292,13 +295,6 @@ contract('MultisigOwner', function (accounts) {
             assert.equal(dateTime,this.dateTime.address)
         })
 
-        it('call setDelegatedFrom of timeLockController', async function(){
-            await this.multisigOwner.setDelegatedFrom(this.token.address, {from: owner1})
-            await this.multisigOwner.setDelegatedFrom(this.token.address, {from: owner2})
-            const delegatedFrom = await this.token.delegatedFrom()
-            assert.equal(delegatedFrom,this.token.address)
-        })
-
         it('call setTrueUSD of timeLockController', async function(){
             await this.multisigOwner.setTrueUSD(this.token.address, {from: owner1})
             await this.multisigOwner.setTrueUSD(this.token.address, {from: owner2})
@@ -320,28 +316,6 @@ contract('MultisigOwner', function (accounts) {
             await this.multisigOwner.setTusdRegistry(this.registry.address, {from: owner2})
             const registry = await this.token.registry()
             assert.equal(registry,this.registry.address)
-        })
-
-        it('call delegateToNewContract of timeLockController', async function(){
-            await this.multisigOwner.pauseMints({from: owner1})
-            await this.multisigOwner.pauseMints({from: owner2})
-            await this.multisigOwner.delegateToNewContract(this.delegateContract.address,
-                this.balanceSheet,
-                this.allowanceSheet, { from: owner1 })
-            await this.multisigOwner.delegateToNewContract(this.delegateContract.address,
-                this.balanceSheet,
-                this.allowanceSheet, { from: owner2 })
-            const delegate = await this.token.delegate()
-            const eventDelegateor = await this.token.eventDelegateor()
-
-            assert.equal(delegate, this.delegateContract.address)
-            assert.equal(eventDelegateor, this.delegateContract.address)
-            let balanceOwner = await BalanceSheet.at(this.balanceSheet).owner()
-            let allowanceOwner = await AllowanceSheet.at(this.allowanceSheet).owner()
-
-
-            assert.equal(balanceOwner, this.delegateContract.address)
-            assert.equal(allowanceOwner, this.delegateContract.address)
         })
 
         it('call transferChild of timeLockController', async function(){

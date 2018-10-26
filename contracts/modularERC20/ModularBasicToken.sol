@@ -1,9 +1,8 @@
 pragma solidity ^0.4.23;
 
+import "../HasOwner.sol";
 import "openzeppelin-solidity/contracts/token/ERC20/ERC20Basic.sol";
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
-import "./BalanceSheet.sol";
-import "./ERC20events.sol";
 
 // Version of OpenZeppelin's BasicToken whose balances mapping has been replaced
 // with a separate BalanceSheet contract. Most useful in combination with e.g.
@@ -13,12 +12,8 @@ import "./ERC20events.sol";
  * @title Basic token
  * @dev Basic version of StandardToken, with no allowances.
  */
-contract ModularBasicToken is ERC20Basic, Claimable, ERC20events {
+contract ModularBasicToken is ERC20Basic, HasOwner {
     using SafeMath for uint256;
-
-    BalanceSheet public balances;
-
-    uint256 totalSupply_;
 
     event BalanceSheetSet(address indexed sheet);
 
@@ -59,7 +54,7 @@ contract ModularBasicToken is ERC20Basic, Claimable, ERC20events {
         // SafeMath.sub will throw if there is not enough balance.
         balances.subBalance(_from, _value);
         balances.addBalance(_to, _value);
-        ERC20events(eventDelegateor).emitTransferEvent(_from, _to, _value);
+        emit Transfer(_from, _to, _value);
     }
     
 

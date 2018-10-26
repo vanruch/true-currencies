@@ -1,14 +1,11 @@
 pragma solidity ^0.4.23;
 
-import "openzeppelin-solidity/contracts/ownership/HasNoEther.sol";
-import "openzeppelin-solidity/contracts/ownership/HasNoTokens.sol";
-import "openzeppelin-solidity/contracts/ownership/Claimable.sol";
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
+import "./HasOwner.sol";
 import "./TrueUSD.sol";
 import "./utilities/DateTime.sol";
-import "../registry/contracts/HasRegistry.sol";
-
-
+import "../registry/contracts/Registry.sol";
+import "./OwnedUpgradeabilityProxy.sol";
 
 /* This contract allows us to split ownership of the TrueUSD contract (and TrueUSD's Registry)
 into two addresses. One, called the "owner" address, has unfettered control of the TrueUSD contract -
@@ -33,7 +30,7 @@ Rules to when a mint can be finalized:
 
 */
 
-contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable {
+contract TimeLockedController {
     using SafeMath for uint256;
 
     struct MintOperation {
@@ -46,12 +43,12 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
         mapping(address => bool) approved; 
     }
 
-    struct TimeOfDay {
-        uint8 hour;
-        uint8 minute;
-    }
-
     mapping(bytes32 => bool) public holidays; //hash of dates to boolean
+
+    address public owner;
+    address public pendingOwner;
+
+    bool public initialized;
 
     bool public mintPaused;
     uint256 public smallMintThreshold; //threshold for a mint to be considered  a small mint
@@ -62,14 +59,18 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     uint256 public timeOfLastMint; //used to refresh dailyMintLimit
     uint256 public mintReqInValidBeforeThisBlock; //all mint request before this block are invalid
     address public mintKey;
-    address public trueUsdFastPause;
+    uint256 public timeZoneDiff = 7 hours; //shift time zones (currently PDT). 0 means UTC
+    MintOperation[] public mintOperations; //list of a mint requests
+    
     TrueUSD public trueUSD;
     DateTimeAPI public dateTime; //datetime contract to get timestamp and date
-    MintOperation[] public mintOperations; //list of a mint requests
-    TimeOfDay public firstMintCheckTimes = TimeOfDay(10, 0); 
-    TimeOfDay public secondMintCheckTimes = TimeOfDay(16, 0); 
+    Registry public registry;
+    address public trueUsdFastPause;
 
-    uint256 public timeZoneDiff = 7 hours; //shift time zones (currently PDT). 0 means UTC
+    uint8 constant public firstMintCheckTimeHour = 10;
+    uint8 constant public firstMintCheckTimeMinute = 0;
+    uint8 constant public secondMintCheckTimeHour = 16;
+    uint8 constant public secondMintCheckTimeMinute = 0;
 
     string constant public IS_MINT_CHECKER = "isTUSDMintChecker";
     string constant public IS_MINT_APPROVER = "isTUSDMintApprover";
@@ -120,17 +121,19 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
         _;
     }
 
-
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event newOwnerPending(address indexed currentOwner, address indexed pendingOwner);
+    event SetRegistry(address indexed registry);
     event RequestMint(address indexed to, address indexed mintKey, uint256 indexed value, uint256 requestedTime, uint256 opIndex);
     event FinalizeMint(address indexed to, address indexed mintKey, uint256 indexed value, uint256 opIndex);
     event TransferChild(address indexed child, address indexed newOwner);
     event RequestReclaimContract(address indexed other);
     event SetTrueUSD(TrueUSD newContract);
+    event TrueUsdInitialized();
     event TransferMintKey(address indexed previousMintKey, address indexed newMintKey);
     event RevokeMint(uint256 opIndex);
     event AllMintsPaused(bool status);
     event MintPaused(uint opIndex, bool status);
-
     event MintApproved(address approver, uint opIndex);
     event MintLimitReset(address sender);
     event ApprovalThresholdChanged(uint8 smallMintApproval, uint8 largeMintApproval);
@@ -140,12 +143,78 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     event DateTimeAddressSet(address newDateTimeContract);
     event TrueUsdFastPauseSet(address _newFastPause);
     event TimeZoneChanged(uint256 oldTimeZone, uint256 newTimeZone);
+
+
+    /*
+    ========================================
+    Ownership functions
+    ========================================
+    */
+
+    function initialize() external {
+        require(!initialized, "already initialized");
+        owner = msg.sender;
+        initialized = true;
+    }
+
+    /**
+    * @dev Throws if called by any account other than the owner.
+    */
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    /**
+    * @dev Modifier throws if called by any account other than the pendingOwner.
+    */
+    modifier onlyPendingOwner() {
+        require(msg.sender == pendingOwner);
+        _;
+    }
+
+    /**
+    * @dev Allows the current owner to set the pendingOwner address.
+    * @param newOwner The address to transfer ownership to.
+    */
+    function transferOwnership(address newOwner) external onlyOwner {
+        pendingOwner = newOwner;
+        emit newOwnerPending(owner , pendingOwner);
+    }
+
+    /**
+    * @dev Allows the pendingOwner address to finalize the transfer.
+    */
+    function claimOwnership() external onlyPendingOwner {
+        emit OwnershipTransferred(owner, pendingOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0);
+    }
+    
+    /*
+    ========================================
+    proxy functions
+    ========================================
+    */
+
+    function transferTusdProxyOwnership(address _newOwner) external onlyOwner {
+        OwnedUpgradeabilityProxy(trueUSD).transferProxyOwnership(_newOwner);
+    }
+
+    function claimTusdProxyOwnership() external onlyOwner {
+        OwnedUpgradeabilityProxy(trueUSD).claimProxyOwnership();
+    }
+
+    function upgradeTusdProxyImplTo(address _implementation) external onlyOwner {
+        OwnedUpgradeabilityProxy(trueUSD).upgradeTo(_implementation);
+    }
+
     /*
     ========================================
     Minting functions
     ========================================
     */
-    
+
     /**
      * @dev define the threshold for a mint to be considered a small mint.
      small mints requires a smaller number of approvals
@@ -226,17 +295,17 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
         uint8 yesterday = dateTime.getDay(now.sub(1 days).sub(timeZoneDiff));
 
         uint yesterdaySecondCheckTime = dateTime.toTimestamp(yesterdayYear,
-        yesterdayMonth, yesterday, secondMintCheckTimes.hour, secondMintCheckTimes.minute);
+        yesterdayMonth, yesterday, secondMintCheckTimeHour, secondMintCheckTimeMinute);
         if (timeRequested.add(30 minutes) <= yesterdaySecondCheckTime) {
             return true;
         }
-        uint firstCheckTime = dateTime.toTimestamp(year, month, day, firstMintCheckTimes.hour, firstMintCheckTimes.minute);
+        uint firstCheckTime = dateTime.toTimestamp(year, month, day, firstMintCheckTimeHour, firstMintCheckTimeMinute);
         if (now.sub(timeZoneDiff) >= firstCheckTime.add(2 hours)) {
             if (timeRequested.add(30 minutes) < firstCheckTime) {
                 return true;
             }
         }
-        uint secondCheckTime = dateTime.toTimestamp(year, month, day, secondMintCheckTimes.hour, secondMintCheckTimes.minute);
+        uint secondCheckTime = dateTime.toTimestamp(year, month, day, secondMintCheckTimeHour, secondMintCheckTimeMinute);
         if (now.sub(timeZoneDiff) >= secondCheckTime.add(2 hours)) {
             if (timeRequested.add(30 minutes) < secondCheckTime) {
                 return true;
@@ -418,20 +487,25 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     }
 
     /** 
-    *@dev Update TrueUSD such that all Incoming delegate* calls from _source
-    will be accepted by trueUSD.
-    */
-    function setDelegatedFrom(address _source) external onlyOwner {
-        trueUSD.setDelegatedFrom(_source);
-    }
-
-    /** 
     *@dev Update this contract's trueUSD pointer to newContract (e.g. if the
     contract is upgraded)
     */
     function setTrueUSD(TrueUSD _newContract) external onlyOwner {
         trueUSD = _newContract;
         emit SetTrueUSD(_newContract);
+    }
+
+    function initializeTrueUSD(uint256 _totalSupply) external onlyOwner {
+        trueUSD.initialize(_totalSupply);
+        emit TrueUsdInitialized();
+    }
+
+    /** 
+    *@dev Update this contract's registry pointer to _registry
+    */
+    function setRegistry(Registry _registry) external onlyOwner {
+        registry = _registry;
+        emit SetRegistry(registry);
     }
 
     /** 
@@ -450,35 +524,27 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     }
 
     /** 
-    *@dev Claim ownership of an arbitrary Claimable contract
+    *@dev Claim ownership of an arbitrary HasOwner contract
     */
     function issueClaimOwnership(address _other) public onlyOwner {
-        Claimable other = Claimable(_other);
+        HasOwner other = HasOwner(_other);
         other.claimOwnership();
     }
 
-    // Future BurnableToken calls to trueUSD will be delegated to _delegate
-    function delegateToNewContract(
-        DelegateBurnable _delegate,
-        Ownable _balanceSheet,
-        Ownable _alowanceSheet) external onlyOwner {
-        //initiate transfer ownership of storage contracts from trueUSD contract
-        requestReclaimContract(_balanceSheet);
-        requestReclaimContract(_alowanceSheet);
- 
-        //claim ownership of storage contract
-        issueClaimOwnership(_balanceSheet);
-        issueClaimOwnership(_alowanceSheet);
-
-        //initiate transfer ownership of storage contracts to new delegate contract
-        transferChild(_balanceSheet, _delegate);
-        transferChild(_alowanceSheet, _delegate);
+    /** 
+    *@dev calls setBalanceSheet(address) and setAllowanceSheet(address) on the _proxy contract
+    @param _proxy the contract that inplments setBalanceSheet and setAllowanceSheet
+    @param _balanceSheet HasOwner storage contract
+    @param _alowanceSheet HasOwner storage contract
+    */
+    function claimStorageForProxy(
+        address _proxy,
+        HasOwner _balanceSheet,
+        HasOwner _alowanceSheet) external onlyOwner {
 
         //call to claim the storage contract with the new delegate contract
-        require(address(_delegate).call(bytes4(keccak256("setBalanceSheet(address)")), _balanceSheet));
-        require(address(_delegate).call(bytes4(keccak256("setAllowanceSheet(address)")), _alowanceSheet));
-
-        trueUSD.delegateToNewContract(_delegate);
+        require(address(_proxy).call(bytes4(keccak256("setBalanceSheet(address)")), _balanceSheet));
+        require(address(_proxy).call(bytes4(keccak256("setAllowanceSheet(address)")), _alowanceSheet));
     }
 
     /** 
@@ -487,7 +553,7 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     *@param _child contract that timeLockController currently Owns 
     *@param _newOwner new owner/pending owner of _child
     */
-    function transferChild(Ownable _child, address _newOwner) public onlyOwner {
+    function transferChild(HasOwner _child, address _newOwner) external onlyOwner {
         _child.transferOwnership(_newOwner);
         emit TransferChild(_child, _newOwner);
     }
@@ -498,7 +564,7 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     in order to transfer it to an upgraded TrueUSD contract.
     *@param _other address of the contract to claim ownership of
     */
-    function requestReclaimContract(Ownable _other) public onlyOwner {
+    function requestReclaimContract(HasOwner _other) public onlyOwner {
         trueUSD.reclaimContract(_other);
         emit RequestReclaimContract(_other);
     }
@@ -598,4 +664,24 @@ contract TimeLockedController is HasRegistry, HasNoEther, HasNoTokens, Claimable
     function changeStaker(address _newStaker) external onlyOwner {
         trueUSD.changeStaker(_newStaker);
     }
+
+    /** 
+    *@dev Owner can send ether balance in contract address
+    *@param _to address to which the funds will be send to
+    */
+    function reclaimEther(address _to) external onlyOwner {
+        _to.transfer(address(this).balance);
+    }
+
+    /** 
+    *@dev Owner can send erc20 token balance in contract address
+    *@param _token address of the token to send
+    *@param _to address to which the funds will be send to
+    */
+    function reclaimToken(ERC20 _token, address _to) external onlyOwner {
+        uint256 balance = _token.balanceOf(this);
+        _token.transfer(_to, balance);
+    }
+
+    function() external {}
 }

@@ -1,7 +1,7 @@
 pragma solidity ^0.4.23;
 
-import "../registry/contracts/HasRegistry.sol";
-import "./modularERC20/ModularPausableToken.sol";
+import "../registry/contracts/Registry.sol";
+import "./CompliantToken.sol";
 
 /*
 This allows for transaction fees to be assessed on transfer, burn, and mint.
@@ -12,18 +12,8 @@ as 10^18 units, so e.g. a one-penny fee for burnFeeFlat would look like
 burnFeeFlat = 10^16
 The fee for transfers is paid by the recipient.
 */
-contract TokenWithFees is ModularPausableToken, HasRegistry {
+contract TokenWithFees is CompliantToken {
     string public constant NO_FEES = "noFees";
-    uint256 public transferFeeNumerator = 0;
-    uint256 public transferFeeDenominator = 10000;
-    uint256 public mintFeeNumerator = 0;
-    uint256 public mintFeeDenominator = 10000;
-    uint256 public mintFeeFlat = 0;
-    uint256 public burnFeeNumerator = 0;
-    uint256 public burnFeeDenominator = 10000;
-    uint256 public burnFeeFlat = 0;
-    // All transaction fees are paid to this address.
-    address public staker;
 
     event ChangeStaker(address indexed addr);
 
@@ -36,10 +26,6 @@ contract TokenWithFees is ModularPausableToken, HasRegistry {
     uint256 burnFeeNumerator,
     uint256 burnFeeDenominator,
     uint256 burnFeeFlat);
-
-    constructor() public {
-        staker = msg.sender;
-    }
 
     /**
     * @dev pay staking fee for mints. Mint fee would be zero if 0x0 has attribute noFees in registry

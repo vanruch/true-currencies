@@ -10,9 +10,6 @@ const AllowanceSheet = artifacts.require("AllowanceSheet")
 const TimeLockedController = artifacts.require("TimeLockedController")
 const TrueUSDMock = artifacts.require("TrueUSDMock")
 const ForceEther = artifacts.require("ForceEther")
-const DelegateBurnableMock = artifacts.require("DelegateBurnableMock")
-const FaultyDelegateBurnableMock1 = artifacts.require("FaultyDelegateBurnableMock1")
-const FaultyDelegateBurnableMock2 = artifacts.require("FaultyDelegateBurnableMock2")
 const DateTimeMock = artifacts.require("DateTimeMock")
 const FastPauseMints = artifacts.require("FastPauseMints")
 const FastPauseTrueUSD = artifacts.require("FastPauseTrueUSD")
@@ -33,18 +30,15 @@ contract('TimeLockedController', function (accounts) {
             this.fastPauseMints = await FastPauseMints.new({ from: owner })
             await this.fastPauseMints.setController(this.controller.address, { from: owner })
             await this.fastPauseMints.modifyPauseKey(pauseKey2, true, { from: owner })
+            await this.controller.initialize({ from: owner })
             await this.controller.setRegistry(this.registry.address, { from: owner })
-            await this.token.transferOwnership(this.controller.address, { from: owner })
-            await this.controller.issueClaimOwnership(this.token.address, { from: owner })
             await this.controller.setTrueUSD(this.token.address, { from: owner })
+            await this.controller.initializeTrueUSD(100*10**18, { from: owner })
             await this.controller.setTusdRegistry(this.registry.address, { from: owner })
             await this.controller.setDateTime(this.dateTime.address, { from: owner })
             await this.controller.transferMintKey(mintKey, { from: owner })
             this.balanceSheet = await this.token.balances()
             this.allowanceSheet = await this.token.allowances()
-            this.delegateContract = await DelegateBurnableMock.new({ from: owner })
-            this.faultyDelegateContract1 = await FaultyDelegateBurnableMock1.new({ from: owner })
-            this.faultyDelegateContract2 = await FaultyDelegateBurnableMock2.new({ from: owner })
             await this.registry.setAttribute(oneHundred, "hasPassedKYC/AML", 1, "notes", { from: owner })
             await this.registry.setAttribute(approver1, "isTUSDMintApprover", 1, "notes", { from: owner })
             await this.registry.setAttribute(approver2, "isTUSDMintApprover", 1, "notes", { from: owner })
@@ -56,7 +50,6 @@ contract('TimeLockedController', function (accounts) {
             if (weekday === 0 || weekday === 6 || weekday === 5){
                 await increaseTime(duration.days(3))
             }
-
         })
 
         describe('Request and Finalize Mints', function () {
@@ -672,19 +665,6 @@ contract('TimeLockedController', function (accounts) {
             })
         })
 
-        describe('setDelegatedFrom', function () {
-            it('sets delegatedFrom', async function () {
-                await this.controller.setDelegatedFrom(oneHundred, { from: owner })
-
-                const addr = await this.token.delegatedFrom()
-                assert.equal(addr, oneHundred)
-            })
-
-            it('cannot be called by non-owner', async function () {
-                await assertRevert(this.controller.setDelegatedFrom(oneHundred, { from: otherAddress }))
-            })
-        })
-
         describe('changeTokenName', function () {
             it('sets the token name', async function () {
                 await this.controller.changeTokenName("FooCoin", "FCN", { from: owner })
@@ -732,49 +712,6 @@ contract('TimeLockedController', function (accounts) {
             })
         })
 
-        describe('delegateToNewContract', function () {
-            it('sets delegate', async function () {
-                await this.controller.delegateToNewContract(this.delegateContract.address,
-                                                            this.balanceSheet,
-                                                            this.allowanceSheet, { from: owner })
-                const delegate = await this.token.delegate()
-
-                assert.equal(delegate, this.delegateContract.address)
-                let balanceOwner = await BalanceSheet.at(this.balanceSheet).owner()
-                let allowanceOwner = await AllowanceSheet.at(this.allowanceSheet).owner()
-
-
-                assert.equal(balanceOwner, this.delegateContract.address)
-                assert.equal(allowanceOwner, this.delegateContract.address)
-
-            })
-
-            it('cannot be called by non-owner', async function () {
-                await assertRevert(this.controller.delegateToNewContract(this.delegateContract.address,
-                                                            this.balanceSheet,
-                                                            this.allowanceSheet, { from: otherAddress }))
-            })
-
-            it('cannot set delegate with balancesheet is not owned', async function () {
-                let balanceSheetAddr = "0x123"
-                let allowanceSheetAddr = "0x234"
-                await assertRevert(this.controller.delegateToNewContract(this.delegateContract.address,
-                                                            balanceSheetAddr,
-                                                            allowanceSheetAddr, { from: owner }))
-            })
-
-            it('fails when new delegate contract doesnt implement setBalanceSheet() ', async function () {
-                await assertRevert(this.controller.delegateToNewContract(this.faultyDelegateContract1.address,
-                                                            this.balanceSheet,
-                                                            this.allowanceSheet, { from: owner }))
-            })
-
-            it('fails when new delegate contract doesnt implement setAllowanceSheet() ', async function () {
-                await assertRevert(this.controller.delegateToNewContract(this.faultyDelegateContract2.address,
-                                                            this.balanceSheet,
-                                                            this.allowanceSheet, { from: owner }))
-            })
-        })
 
         describe('pause trueUSD and wipe accounts', function(){
             beforeEach(async function(){
@@ -830,6 +767,28 @@ contract('TimeLockedController', function (accounts) {
                 await this.token.transfer(mintKey, 40*10**18, { from: oneHundred })
             })
         })
+        describe('Claim storage contracts', function () {
+            it('can claim storage contracts for TrueUSD', async function () {
+                this.tempBalanceSheet = await BalanceSheet.new({from: owner})
+                this.tempAllowanceSheet = await AllowanceSheet.new({from: owner})
+                await this.tempBalanceSheet.transferOwnership(this.token.address, {from: owner})
+                await this.tempAllowanceSheet.transferOwnership(this.token.address, {from: owner})
+                await this.controller.claimStorageForProxy(this.token.address, this.tempBalanceSheet.address, this.tempAllowanceSheet.address,{from: owner})
+            })
+
+            it('fails when TrueUSD is not the pending owner of storage contracts', async function () {
+                this.tempBalanceSheet = await BalanceSheet.new({from: owner})
+                this.tempAllowanceSheet = await AllowanceSheet.new({from: owner})
+                await assertRevert(this.controller.claimStorageForProxy(this.token.address, this.tempBalanceSheet.address, this.tempAllowanceSheet.address,{from: owner}))
+            })
+
+            it('fails when TrueUSD is not the pending owner of one of the storage contracts', async function () {
+                this.tempBalanceSheet = await BalanceSheet.new({from: owner})
+                this.tempAllowanceSheet = await AllowanceSheet.new({from: owner})
+                await this.tempBalanceSheet.transferOwnership(this.token.address, {from: owner})
+                await assertRevert(this.controller.claimStorageForProxy(this.token.address, this.tempBalanceSheet.address, this.tempAllowanceSheet.address,{from: owner}))
+            })
+        })
 
 
         describe('requestReclaimContract', function () {
@@ -874,6 +833,15 @@ contract('TimeLockedController', function (accounts) {
                 await forceEther.destroyAndSend(this.token.address)
                 await assertRevert(this.controller.requestReclaimEther({ from: otherAddress }))
             })
+
+            it('can reclaim ether in the controller contract address',  async function () {
+                const forceEther = await ForceEther.new({ from: oneHundred, value: "10000000000000000000" })
+                await forceEther.destroyAndSend(this.controller.address)
+                const balance1 = web3.fromWei(web3.eth.getBalance(owner), 'ether').toNumber()
+                await this.controller.reclaimEther(owner, { from: owner })
+                const balance2 = web3.fromWei(web3.eth.getBalance(owner), 'ether').toNumber()
+                assert.isAbove(balance2, balance1)
+            })
         })
 
         describe('requestReclaimToken', function () {
@@ -886,6 +854,12 @@ contract('TimeLockedController', function (accounts) {
             it('cannot be called by non-owner', async function () {
                 await this.token.transfer(this.token.address, 40*10**18, { from: oneHundred })
                 await assertRevert(this.controller.requestReclaimToken(this.token.address, { from: otherAddress }))
+            })
+
+            it('can reclaim token in the controller contract address',  async function () {
+                await this.token.transfer(this.controller.address, 40*10**18, { from: oneHundred })
+                await this.controller.reclaimToken(this.token.address, owner, { from: owner })
+                await assertBalance(this.token, owner, 40*10**18)
             })
         })
 
@@ -912,111 +886,6 @@ contract('TimeLockedController', function (accounts) {
 
             it('cannot be called by non-owner', async function () {
                 await assertRevert(this.controller.changeStakingFees(1, 2, 3, 4, 5, 6, 7, 8, { from: otherAddress }))
-            })
-        })
-
-
-
-        describe('Full delegation process', function () {
-            beforeEach(async function () {
-                this.newToken = await TrueUSD.new({ from: owner })
-                await this.newToken.setDelegatedFrom(this.token.address, { from: owner })
-                await this.newToken.setTotalSupply(100*10**18, { from: owner })
-                await assertRevert(this.newToken.setTotalSupply(10*10**18, { from: owner }))
-                await this.newToken.setBurnBounds(10*10**18, 20*10**18, { from: owner })
-                await this.newToken.setGlobalPause(this.globalPause.address, { from: owner })    
-                await this.newToken.transferOwnership(this.controller.address, { from: owner })
-                await this.controller.issueClaimOwnership(this.newToken.address, { from: owner })
-                await this.controller.delegateToNewContract(this.newToken.address,
-                    this.balanceSheet,
-                    this.allowanceSheet, { from: owner })
-                await this.controller.setTrueUSD(this.newToken.address, { from: owner })
-                await this.controller.setTusdRegistry(this.registry.address, { from: owner })  
-                await this.controller.changeStakingFees(0, 1, 0, 1, 0, 0, 1, 0, { from: owner })
-  
-            })
-
-            describe('Base contract behaves well', function () {
-                it('delegation set properly', async function(){
-                    assert.equal(await this.token.delegate(),this.newToken.address)
-                    assert.equal(await this.token.eventDelegateor(),this.newToken.address)
-                    assert.equal(await this.newToken.eventDelegateor(),this.token.address)
-                    assert.equal(await this.newToken.delegatedFrom(),this.token.address)
-                })
-
-                it('checks for totalSupply', async function(){
-                    const totalSupply = await this.token.totalSupply()
-                    assert.equal(Number(totalSupply),100000000000000000000)
-                })
-
-                it('transfer token from one account to another', async function(){
-                    assertBalance(this.token, oneHundred, 100*10**18)
-                    await this.token.transfer(otherAddress, 10*10**18, { from: oneHundred }) 
-                    assertBalance(this.token, otherAddress, 10*10**18)
-                })
-
-                it('transferFrom token from one account to another', async function(){
-                    await this.token.approve(spender, 10*10**18, { from: oneHundred })
-                    const allowance = await this.token.allowance(oneHundred, spender)
-                    assert.equal(Number(allowance),10*10**18)
-                    await this.token.transferFrom(oneHundred, otherAddress, 10*10**18, { from: spender })
-                    assertBalance(this.token, otherAddress, 10*10**18)
-                })
-
-                it('burns from an account', async function(){
-                    await this.registry.setAttribute(oneHundred, "canBurn", 1, "notes", { from: owner })
-                    await this.token.burn(10*10**18, "burn", { from: oneHundred })
-                    assertBalance(this.token, oneHundred, 90*10**18)
-                })
-
-                it('increaseApproval and decreaseApproval of an address', async function(){
-                    await this.token.increaseApproval(spender, 10*10**18, { from: oneHundred })
-                    let allowance = await this.token.allowance(oneHundred, spender)
-                    assert.equal(Number(allowance),10*10**18)
-                    await this.token.decreaseApproval(spender, 10*10**18, { from: oneHundred })
-                    allowance = await this.token.allowance(oneHundred, spender)
-                    assert.equal(Number(allowance),0)
-                })
-            })
-            describe('New contract behaves well', function () {
-                it('cannot set totalsupply again', async function(){
-                    await assertRevert(this.newToken.setTotalSupply(10, { from: owner }))
-                })
-
-                it('checks for totalSupply', async function(){
-                    const totalSupply = await this.newToken.totalSupply()
-                    assert.equal(Number(totalSupply),100*10**18)
-                })
-
-                it('transfer token from one account to another', async function(){
-                    assertBalance(this.newToken, oneHundred, 100*10**18)
-                    await this.token.transfer(otherAddress, 10*10**18, { from: oneHundred }) 
-                    assertBalance(this.newToken, otherAddress, 10*10**18)
-                })
-
-                it('transferFrom token from one account to another', async function(){
-                    await this.newToken.approve(spender, 10*10**18, { from: oneHundred })
-                    const allowance = await this.newToken.allowance(oneHundred, spender)
-                    assert.equal(Number(allowance),10*10**18)
-                    await this.newToken.transferFrom(oneHundred, otherAddress, 10*10**18, { from: spender })
-                    assertBalance(this.newToken, otherAddress, 10*10**18)
-                })
-
-                it('burns from an account', async function(){
-                    await this.registry.setAttribute(oneHundred, "canBurn", 1, "notes", { from: owner })
-                    await this.newToken.burn(10*10**18, "burn", { from: oneHundred })
-                    assertBalance(this.newToken, oneHundred, 90*10**18)
-                })
-
-                it('increaseApproval and decreaseApproval of an address', async function(){
-                    await this.newToken.increaseApproval(spender, 10*10**18, { from: oneHundred })
-                    let allowance = await this.newToken.allowance(oneHundred, spender)
-                    assert.equal(Number(allowance),10*10**18)
-                    await this.newToken.decreaseApproval(spender, 10*10**18, { from: oneHundred })
-                    allowance = await this.newToken.allowance(oneHundred, spender)
-                    assert.equal(Number(allowance),0)
-                })
-
             })
         })
     })

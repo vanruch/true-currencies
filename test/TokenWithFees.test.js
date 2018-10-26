@@ -18,7 +18,9 @@ contract('TokenWithFees', function ([_, owner, oneHundred, anotherAccount]) {
         await this.token.setRegistry(this.registry.address, { from: owner })
         this.globalPause = await GlobalPause.new({ from: owner })
         await this.token.setGlobalPause(this.globalPause.address, { from: owner })
-
+        await this.registry.setAttribute(oneHundred, "hasPassedKYC/AML", 1, "notes", { from: owner })
+        await this.registry.setAttribute(anotherAccount, "hasPassedKYC/AML", 1, "notes", { from: owner })
+        await this.registry.setAttribute(oneHundred, "canBurn", 1, "notes", { from: owner })
         await this.token.mint(oneHundred, 100*10**18, { from: owner })
     })
 
