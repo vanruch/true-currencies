@@ -45,10 +45,6 @@ contract('TrueUSD', function (accounts) {
             assert.equal(balanceWithEther, 0)
         })
 
-        it('trueUSD does not accept ether', async function(){
-            await this.token.sendTransaction({from: oneHundred, gas: 600000, value: 1000});                  
-        })
-
         it('only pendingOwner can claim ownership of TUSD', async function(){
             await this.token.transferOwnership(oneHundred, { from: owner })
             await assertRevert(this.token.claimOwnership({ from: anotherAccount }))

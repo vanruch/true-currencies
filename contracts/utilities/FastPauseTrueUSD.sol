@@ -1,6 +1,6 @@
 pragma solidity ^0.4.21;
 
-import "../TimeLockedController.sol";
+import "../Owners/TimeLockedController.sol";
 
 /*
 Allows for admins to quickly respond to critical emergencies

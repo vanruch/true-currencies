@@ -72,5 +72,7 @@ RedeemToken
     /**
     * @dev Disallows direct send by settings a default function without the `payable` flag.
     */
-    function() external {}
+    function() external {
+        revert();
+    }
 }

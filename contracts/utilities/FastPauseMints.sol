@@ -2,7 +2,7 @@ pragma solidity ^0.4.21;
 
 
 import "openzeppelin-solidity/contracts/ownership/Claimable.sol";
-import "../TimeLockedController.sol";
+import "../Owners/TimeLockedController.sol";
 
 /*
 Allows for admins to quickly respond to fradulent mints

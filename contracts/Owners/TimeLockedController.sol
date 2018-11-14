@@ -1,11 +1,11 @@
 pragma solidity ^0.4.23;
 
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
-import "./HasOwner.sol";
-import "./TrueUSD.sol";
-import "./utilities/DateTime.sol";
-import "../registry/contracts/Registry.sol";
-import "./OwnedUpgradeabilityProxy.sol";
+import "../HasOwner.sol";
+import "../TrueUSD.sol";
+import "../utilities/DateTime.sol";
+import "../../registry/contracts/Registry.sol";
+import "../Proxy/OwnedUpgradeabilityProxy.sol";
 
 /* This contract allows us to split ownership of the TrueUSD contract (and TrueUSD's Registry)
 into two addresses. One, called the "owner" address, has unfettered control of the TrueUSD contract -
@@ -495,6 +495,10 @@ contract TimeLockedController {
         emit SetTrueUSD(_newContract);
     }
 
+    /** 
+    *@dev initializes the trueUSD contract so that the controller is now the owner.
+    @param _totalSupply the current total supply of the token contract
+    */
     function initializeTrueUSD(uint256 _totalSupply) external onlyOwner {
         trueUSD.initialize(_totalSupply);
         emit TrueUsdInitialized();
