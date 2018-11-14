@@ -14,12 +14,6 @@ const AllowanceSheet = artifacts.require("AllowanceSheet")
 const ForceEther = artifacts.require("ForceEther")
 const GlobalPause = artifacts.require("GlobalPause")
 const TusdProxy = artifacts.require("OwnedUpgradeabilityProxy")
-// import burnableTokenWithBoundsTests from './BurnableTokenWithBounds'
-// import basicTokenTests from './token/BasicToken';
-// import standardTokenTests from './token/StandardToken';
-// import burnableTokenTests from './token/BurnableToken';
-// import compliantTokenTests from './CompliantToken';
-// import tokenWithFeesTests from './TokenWithFees';
 
 
 contract('Proxy', function (accounts) {
@@ -78,12 +72,6 @@ contract('Proxy', function (accounts) {
             it ('sets staking fees', async function(){
                 await this.token.changeStakingFees(0,1000,0,1000,0,0,1000,0, {from: owner})                
             })
-
-            it('trueUSD does not accept ether', async function(){
-                await assertRevert(this.token.sendTransaction({from: owner, gas: 600000, value: 1000}));                  
-                const balanceWithEther = web3.fromWei(web3.eth.getBalance(this.token.address), 'ether').toNumber()
-                assert.equal(balanceWithEther, 0)
-            })
         })
         describe('---Tusd token functions---', function(){
             beforeEach(async function () {
@@ -104,7 +92,7 @@ contract('Proxy', function (accounts) {
             }) 
 
             basicTokenTests([owner, oneHundred, anotherAccount])
-            // standardTokenTests([owner, oneHundred, anotherAccount])
+            standardTokenTests([owner, oneHundred, anotherAccount])
 
         })
     })

@@ -1,9 +1,8 @@
 pragma solidity ^0.4.23;
 
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
-import "../HasOwner.sol";
+import "./HasOwner.sol";
 import "../TrueUSD.sol";
-import "../utilities/DateTime.sol";
 import "../../registry/contracts/Registry.sol";
 import "../Proxy/OwnedUpgradeabilityProxy.sol";
 
@@ -37,7 +36,6 @@ contract TimeLockedController {
         address to;
         uint256 value;
         uint256 requestedBlock;
-        uint256 timeRequested;
         uint256 numberOfApproval;
         bool paused;
         mapping(address => bool) approved; 
@@ -50,30 +48,34 @@ contract TimeLockedController {
 
     bool public initialized;
 
+    uint256 public instantMintThreshold;
+    uint256 public ratifiedMintThreshold;
+    uint256 public jumboMintThreshold;
+
+
+    uint256 public instantMintLimit; 
+    uint256 public ratifiedMintLimit; 
+    uint256 public jumboMintLimit;
+
+    uint256 public instantMintPool; 
+    uint256 public ratifiedMintPool; 
+    uint256 public jumboMintPool;
+    uint8 public ratifiedPoolRefillApprovals;
+
+    uint8 constant public RATIFY_MINT_SIGS = 1;
+    uint8 constant public JUMBO_MINT_SIGS = 3;
+
     bool public mintPaused;
-    uint256 public smallMintThreshold; //threshold for a mint to be considered  a small mint
-    uint8 public minSmallMintApproval; //minimal number of approvals needed for a small mint
-    uint8 public minLargeMintApproval; //minimal number of approvals needed for a large mint
-    uint256 public dailyMintLimit; 
-    uint256 public mintedToday; //how many tokens are requested today
-    uint256 public timeOfLastMint; //used to refresh dailyMintLimit
     uint256 public mintReqInValidBeforeThisBlock; //all mint request before this block are invalid
     address public mintKey;
-    uint256 public timeZoneDiff = 7 hours; //shift time zones (currently PDT). 0 means UTC
     MintOperation[] public mintOperations; //list of a mint requests
     
     TrueUSD public trueUSD;
-    DateTimeAPI public dateTime; //datetime contract to get timestamp and date
     Registry public registry;
     address public trueUsdFastPause;
 
-    uint8 constant public firstMintCheckTimeHour = 10;
-    uint8 constant public firstMintCheckTimeMinute = 0;
-    uint8 constant public secondMintCheckTimeHour = 16;
-    uint8 constant public secondMintCheckTimeMinute = 0;
-
     string constant public IS_MINT_CHECKER = "isTUSDMintChecker";
-    string constant public IS_MINT_APPROVER = "isTUSDMintApprover";
+    string constant public IS_MINT_RATIFIER = "isTUSDMintRatifier";
 
     modifier onlyFastPauseOrOwner() {
         require(msg.sender == trueUsdFastPause || msg.sender == owner, "must be pauser or owner");
@@ -90,8 +92,8 @@ contract TimeLockedController {
         _;
     }
 
-    modifier onlyMintApproverOrOwner() {
-        require(registry.hasAttribute(msg.sender, IS_MINT_APPROVER) || msg.sender == owner, "must be approver or owner");
+    modifier onlyMintRatifierOrOwner() {
+        require(registry.hasAttribute(msg.sender, IS_MINT_RATIFIER) || msg.sender == owner, "must be ratifier or owner");
         _;
     }
 
@@ -103,46 +105,31 @@ contract TimeLockedController {
         _;
     }
 
-    //mint operations by the mintkey cannot be processed on weekends or defined holidays
-    modifier notOnWeekendOrHoliday() {
-        uint shiftedTimestamp = now.sub(timeZoneDiff);
-        if (msg.sender != owner) {
-            //weekend
-            uint8 weekday = dateTime.getWeekday(shiftedTimestamp);
-            require(weekday != 0, "cannot mint on weekend");
-            require(weekday != 6, "cannot mint on weekend");
-
-            //holidays
-            uint16 year = dateTime.getYear(shiftedTimestamp);
-            uint8 month = dateTime.getMonth(shiftedTimestamp);
-            uint8 day = dateTime.getDay(shiftedTimestamp);
-            require(!holidays[keccak256(year, month, day)], "not on holiday");
-        }
-        _;
-    }
-
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event newOwnerPending(address indexed currentOwner, address indexed pendingOwner);
     event SetRegistry(address indexed registry);
-    event RequestMint(address indexed to, address indexed mintKey, uint256 indexed value, uint256 requestedTime, uint256 opIndex);
-    event FinalizeMint(address indexed to, address indexed mintKey, uint256 indexed value, uint256 opIndex);
     event TransferChild(address indexed child, address indexed newOwner);
     event RequestReclaimContract(address indexed other);
     event SetTrueUSD(TrueUSD newContract);
     event TrueUsdInitialized();
+    
+    event RequestMint(address indexed to, uint256 indexed value, uint256 indexed opIndex, address mintKey);
+    event FinalizeMint(address indexed to, uint256 indexed value, uint256 indexed opIndex, address mintKey);
+    event InstantMint(address indexed to, uint256 indexed value, address indexed mintKey);
+    
     event TransferMintKey(address indexed previousMintKey, address indexed newMintKey);
+    event MintRatified(uint256 indexed opIndex, address indexed ratifier);
     event RevokeMint(uint256 opIndex);
     event AllMintsPaused(bool status);
     event MintPaused(uint opIndex, bool status);
     event MintApproved(address approver, uint opIndex);
-    event MintLimitReset(address sender);
-    event ApprovalThresholdChanged(uint8 smallMintApproval, uint8 largeMintApproval);
-    event SmallMintThresholdChanged(uint oldThreshold, uint newThreshold);
-    event DailyLimitChanged(uint oldLimit, uint newLimit);
-    event HolidayModified(uint16 year, uint8 month, uint8 day, bool status);
-    event DateTimeAddressSet(address newDateTimeContract);
     event TrueUsdFastPauseSet(address _newFastPause);
-    event TimeZoneChanged(uint256 oldTimeZone, uint256 newTimeZone);
+
+    event MintThresholdChanged(uint instant, uint ratified, uint jumbo);
+    event MintLimitsChanged(uint instant, uint ratified, uint jumbo);
+    event InstantPoolRefilled();
+    event RadifyPoolRefilled();
+    event JumboPoolRefilled();
 
 
     /*
@@ -218,47 +205,44 @@ contract TimeLockedController {
     /**
      * @dev define the threshold for a mint to be considered a small mint.
      small mints requires a smaller number of approvals
-     * @param _threshold the threshold for a small mint
      */
-    function setSmallMintThreshold(uint256 _threshold) external onlyOwner {
-        emit SmallMintThresholdChanged(smallMintThreshold, _threshold);
-        smallMintThreshold = _threshold;
+    function setMintThresholds(uint256 _instant, uint256 _ratified, uint256 _jumbo) external onlyOwner {
+        instantMintThreshold= _instant;
+        ratifiedMintThreshold = _ratified;
+        jumboMintThreshold = _jumbo;
+        emit MintThresholdChanged(_instant, _ratified, _jumbo);
     }
 
-    /**
-     * @dev Set the number of approvals needed to approve a small mint and a large mint
-     * @param _smallMintApproval number of approvals needed for a small mint
-     * @param _largeMintApproval number of approvals needed for a large mint
-     */
-    function setMinimalApprovals(uint8 _smallMintApproval, uint8 _largeMintApproval) external onlyOwner {
-        minSmallMintApproval = _smallMintApproval;
-        minLargeMintApproval = _largeMintApproval;
-        emit ApprovalThresholdChanged(_smallMintApproval, _largeMintApproval);
+    function setMintLimits(uint256 _instant, uint256 _ratified, uint256 _jumbo) external onlyOwner {
+        instantMintLimit = _instant;
+        ratifiedMintLimit = _ratified;
+        jumboMintLimit = _jumbo;
+        emit MintLimitsChanged(_instant, _ratified, _jumbo);
     }
 
-    /**
-     * @dev set limit on the amount of tokens that can be requested each day 
-     * @param _limit limit on the amount of tokens that can be requested each day
-     */
-    function setMintLimit(uint256 _limit) external onlyOwner {
-        emit DailyLimitChanged(dailyMintLimit, _limit);
-        dailyMintLimit = _limit;
-    }
-    
-    /**
-     * @dev reset the amount that had been requested today
-     */ 
-    function resetMintedToday() external onlyOwner {
-        mintedToday = 0;
-        emit MintLimitReset(msg.sender);
+
+    function refillInstantMintPool() external onlyMintRatifierOrOwner {
+        ratifiedMintPool = ratifiedMintPool.sub(instantMintLimit.sub(instantMintPool));
+        instantMintPool = instantMintLimit;
+        emit InstantPoolRefilled();
     }
 
-    /**
-     * @dev reset the amount that had been requested today
-     */ 
-    function setTimeZoneDiff(uint _hours) external onlyOwner{
-        emit TimeZoneChanged(timeZoneDiff.div(1 hours), _hours);
-        timeZoneDiff = _hours.mul(1 hours);
+    function refillRatifiedMintPool() external onlyMintRatifierOrOwner {
+        if (msg.sender != owner) {
+            if (ratifiedPoolRefillApprovals < 2) {
+                ratifiedPoolRefillApprovals += 1;
+                return;
+            } 
+        }
+        jumboMintPool = jumboMintPool.sub(ratifiedMintLimit.sub(ratifiedMintPool));
+        ratifiedMintPool = ratifiedMintLimit;
+        ratifiedPoolRefillApprovals = 0;
+        emit RadifyPoolRefilled();
+    }
+
+    function refillJumboMintPool() external onlyOwner {
+        jumboMintPool = jumboMintLimit;
+        emit JumboPoolRefilled();
     }
 
     /**
@@ -266,48 +250,71 @@ contract TimeLockedController {
      * @param _to the address to mint to
      * @param _value the amount requested
      */
-    function requestMint(address _to, uint256 _value) external mintNotPaused notOnWeekendOrHoliday onlyMintKeyOrOwner {
-        uint currentTimeZoneTime = now.sub(timeZoneDiff);
-        if (dateTime.getMonth(currentTimeZoneTime) == dateTime.getMonth(timeOfLastMint) &&
-            dateTime.getDay(currentTimeZoneTime) == dateTime.getDay(timeOfLastMint)) {
-            mintedToday = mintedToday.add(_value);
-            require(mintedToday <= dailyMintLimit, "over the mint limit");
-        } else {
-            mintedToday = _value;
-        }
-        timeOfLastMint = currentTimeZoneTime;
-        MintOperation memory op = MintOperation(_to, _value, block.number, currentTimeZoneTime, 0, false);
+    function requestMint(address _to, uint256 _value) external mintNotPaused onlyMintKeyOrOwner {
+        MintOperation memory op = MintOperation(_to, _value, block.number, 0, false);
         mintOperations.push(op);
-        emit RequestMint(_to, msg.sender, _value, timeOfLastMint, mintOperations.length);
+        emit RequestMint(_to, _value, mintOperations.length, msg.sender);
+    }
+
+    function instantMint(address _to, uint256 _value) mintNotPaused onlyMintKeyOrOwner {
+        require(_value <= instantMintPool && _value <= instantMintThreshold);
+        instantMintPool = instantMintPool.sub(_value);
+        emit InstantMint(_to, _value, msg.sender);
+        trueUSD.mint(_to, _value);
+    }
+
+    function ratifyMint(uint256 _index, address _to, uint256 _value) external mintNotPaused onlyMintRatifierOrOwner {
+        MintOperation memory op = mintOperations[_index];
+        require(op.to == _to);
+        require(op.value == _value);
+        require(!mintOperations[_index].approved[msg.sender], "already approved");
+        mintOperations[_index].approved[msg.sender] = true;
+        mintOperations[_index].numberOfApproval = mintOperations[_index].numberOfApproval.add(1);
+        emit MintRatified(_index, msg.sender);
+        if (hasEnoughApproval(mintOperations[_index].numberOfApproval, _value)){
+            finalizeMint(_index);
+        }
     }
 
     /**
-     * @dev compute whether or not the mint checktime conditions are met
-     * @return a boolean indicating whether or not enough time has elapsed since the request
+     * @dev finalize a mint request, mint the amount requested to the specified address
+     @param _index of the request (visible in the RequestMint event accompanying the original request)
      */
-    function enoughTimePassed(uint256 timeRequested) public view returns (bool) {
-        uint16 year = dateTime.getYear(now.sub(timeZoneDiff));
-        uint8 month = dateTime.getMonth(now.sub(timeZoneDiff));
-        uint8 day = dateTime.getDay(now.sub(timeZoneDiff));
+    function finalizeMint(uint256 _index) public {
+        MintOperation memory op = mintOperations[_index];
+        address to = op.to;
+        uint256 value = op.value;
+        if (msg.sender != owner) {
+            require(canFinalize(_index));
+            _subtractFromMintPool(value);
+        }
+        delete mintOperations[_index];
+        trueUSD.mint(to, value);
+        emit FinalizeMint(to, value, _index, msg.sender);
+    }
 
-        uint16 yesterdayYear = dateTime.getYear(now.sub(1 days).sub(timeZoneDiff));
-        uint8 yesterdayMonth = dateTime.getMonth(now.sub(1 days).sub(timeZoneDiff));
-        uint8 yesterday = dateTime.getDay(now.sub(1 days).sub(timeZoneDiff));
+    function _subtractFromMintPool(uint256 _value) internal {
+        if (_value <= ratifiedMintPool && _value <= ratifiedMintThreshold) {
+            ratifiedMintPool = ratifiedMintPool.sub(_value);
+        } else {
+            jumboMintPool = jumboMintPool.sub(_value);
+        }
+    }
 
-        uint yesterdaySecondCheckTime = dateTime.toTimestamp(yesterdayYear,
-        yesterdayMonth, yesterday, secondMintCheckTimeHour, secondMintCheckTimeMinute);
-        if (timeRequested.add(30 minutes) <= yesterdaySecondCheckTime) {
+    /**
+     * @dev compute if the number of approvals is enough for a given mint amount
+     */
+    function hasEnoughApproval(uint256 _numberOfApproval, uint256 _value) public view returns (bool) {
+        if (msg.sender == owner) {
             return true;
         }
-        uint firstCheckTime = dateTime.toTimestamp(year, month, day, firstMintCheckTimeHour, firstMintCheckTimeMinute);
-        if (now.sub(timeZoneDiff) >= firstCheckTime.add(2 hours)) {
-            if (timeRequested.add(30 minutes) < firstCheckTime) {
+        if (_value <= ratifiedMintPool && _value <= ratifiedMintThreshold) {
+            if (_numberOfApproval >= RATIFY_MINT_SIGS){
                 return true;
             }
         }
-        uint secondCheckTime = dateTime.toTimestamp(year, month, day, secondMintCheckTimeHour, secondMintCheckTimeMinute);
-        if (now.sub(timeZoneDiff) >= secondCheckTime.add(2 hours)) {
-            if (timeRequested.add(30 minutes) < secondCheckTime) {
+        if (_value <= jumboMintPool && _value <= jumboMintThreshold) {
+            if (_numberOfApproval >= JUMBO_MINT_SIGS){
                 return true;
             }
         }
@@ -315,59 +322,15 @@ contract TimeLockedController {
     }
 
     /**
-     * @dev compute if the number of approvals is enough for a given mint amount
-     */
-    function hasEnoughApproval(uint256 numberOfApproval, uint256 value) public view returns (bool) {
-        if (value < smallMintThreshold) {
-            if (numberOfApproval < minSmallMintApproval) {
-                return false;
-            }
-        } else {
-            if (numberOfApproval < minLargeMintApproval) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
      * @dev compute if a mint request meets all the requirements to be finalized
      utility function for a front end
      */
-    function canFinalize(uint256 _index) public view notOnWeekendOrHoliday returns(bool) {
+    function canFinalize(uint256 _index) public view returns(bool) {
         MintOperation memory op = mintOperations[_index];
-        require(op.requestedBlock > mintReqInValidBeforeThisBlock, "this mint is invalid");
+        require(op.requestedBlock > mintReqInValidBeforeThisBlock, "this mint is invalid"); //also checks if request still exists
         require(!op.paused, "this mint is paused");
-        require(enoughTimePassed(op.timeRequested), "not enough time passed"); //checks that enough time has elapsed
         require(hasEnoughApproval(op.numberOfApproval, op.value), "not enough approvals");
         return true;
-    }
-
-    /**
-     * @dev finalize a mint request, mint the amount requested to the specified address
-     @param _index of the request (visible in the RequestMint event accompanying the original request)
-     */
-    function finalizeMint(uint256 _index) external mintNotPaused notOnWeekendOrHoliday onlyMintKeyOrOwner {
-        if (msg.sender == mintKey) {
-            require(canFinalize(_index));
-        }
-        MintOperation memory op = mintOperations[_index];
-        address to = op.to;
-        uint256 value = op.value;
-        delete mintOperations[_index];
-        trueUSD.mint(to, value);
-        emit FinalizeMint(to, msg.sender, value, _index);
-    }
-
-    /** 
-    *@dev approve a mint request, does not mint. A request mint requires at least approvals before it can be finalized
-    *@param index of the request (visible in the RequestMint event accompanying the original request)
-    */
-    function approveMint(uint256 _index) external onlyMintApproverOrOwner {
-        require(!mintOperations[_index].approved[msg.sender], "already approved");
-        mintOperations[_index].approved[msg.sender] = true;
-        mintOperations[_index].numberOfApproval = mintOperations[_index].numberOfApproval.add(1);
-        emit MintApproved(msg.sender, _index);
     }
 
     /** 
@@ -377,13 +340,6 @@ contract TimeLockedController {
     function revokeMint(uint256 _index) external onlyMintKeyOrOwner {
         delete mintOperations[_index];
         emit RevokeMint(_index);
-    }
-
-    /** 
-    *@dev return current time in pacific time
-    */
-    function returnTime() public view returns (uint256) {
-        return now.sub(timeZoneDiff);
     }
 
     function mintOperationCount() public view returns (uint256) {
@@ -453,38 +409,16 @@ contract TimeLockedController {
         emit MintPaused(_opIndex, false);
     }
 
-    /** 
-    *@dev owner and mintchecker can specify a date on which mint actions are blocked
-    (owner key can still mint)
-    *@param  _year _month _day: the date that mint actions are blocked 
-    */
-    function addHoliday(uint16 _year, uint8 _month, uint8 _day) external onlyMintCheckerOrOwner {
-        holidays[keccak256(_year, _month, _day)] = true;
-        emit HolidayModified(_year, _month, _day, true);
-    }
-
-    /** 
-    *@dev owner can lift the mint block on a day
-    */
-    function removeHoliday(uint16 _year, uint8 _month, uint8 _day) external onlyOwner {
-        holidays[keccak256(_year, _month, _day)] = false;
-        emit HolidayModified(_year, _month, _day, false);
-    }
-
-
     /*
     ========================================
     set and claim contracts, administrative
     ========================================
     */
 
-    /** 
-    *@dev update address for the dateTime contract.
-    */
-    function setDateTime(address _newContract) external onlyOwner {
-        dateTime = DateTimeAPI(_newContract);
-        emit DateTimeAddressSet(_newContract);
-    }
+    // function incrementBurnAddressCount() external onlyOwner {
+    //     trueUSD.;
+    //     emit SetTrueUSD(_newContract);
+    // }
 
     /** 
     *@dev Update this contract's trueUSD pointer to newContract (e.g. if the
@@ -495,10 +429,6 @@ contract TimeLockedController {
         emit SetTrueUSD(_newContract);
     }
 
-    /** 
-    *@dev initializes the trueUSD contract so that the controller is now the owner.
-    @param _totalSupply the current total supply of the token contract
-    */
     function initializeTrueUSD(uint256 _totalSupply) external onlyOwner {
         trueUSD.initialize(_totalSupply);
         emit TrueUsdInitialized();

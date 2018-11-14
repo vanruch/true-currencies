@@ -7,7 +7,6 @@ const AllowanceSheet = artifacts.require("AllowanceSheet")
 const ForceEther = artifacts.require("ForceEther")
 const GlobalPause = artifacts.require("GlobalPause")
 const Proxy = artifacts.require("OwnedUpgradeabilityProxy")
-const DateTimeMock = artifacts.require("DateTimeMock")
 const FastPauseMints = artifacts.require("FastPauseMints")
 const FastPauseTrueUSD = artifacts.require("FastPauseTrueUSD")
 const TimeLockedController = artifacts.require("TimeLockedController")
@@ -22,7 +21,6 @@ contract('--Proxy With Controller--', function (accounts) {
             this.tokenProxy = await Proxy.new({ from: owner })
             this.tusdImplementation = await TrueUSD.new({ from: owner })
             this.globalPause = await GlobalPause.new({ from: owner })
-            this.dateTime = await DateTimeMock.new({ from: owner })
             this.token = await TrueUSD.at(this.tokenProxy.address)
             this.balanceSheet = await BalanceSheet.new({ from: owner })
             this.allowanceSheet = await AllowanceSheet.new({ from: owner })
@@ -46,7 +44,6 @@ contract('--Proxy With Controller--', function (accounts) {
             await this.fastPauseMints.modifyPauseKey(pauseKey2, true, { from: owner })
             await this.controller.setRegistry(this.registry.address, { from: owner })
             await this.controller.setTrueUSD(this.token.address, { from: owner })
-            await this.controller.setDateTime(this.dateTime.address, { from: owner })
             await this.controller.transferMintKey(mintKey, { from: owner })
             await this.registry.setAttribute(oneHundred, "hasPassedKYC/AML", 1, "notes", { from: owner })
             await this.registry.setAttribute(approver1, "isTUSDMintApprover", 1, "notes", { from: owner })
@@ -99,14 +96,8 @@ contract('--Proxy With Controller--', function (accounts) {
                 await this.token.mint(oneHundred, 100*10**18, {from: owner})
                 await this.token.transferOwnership(this.controller.address, { from: owner })
                 await this.controller.issueClaimOwnership(this.token.address, { from: owner })
-                await this.controller.setMintLimit(30*10**18, { from: owner })
-                await this.controller.setSmallMintThreshold(11*10**18, { from: owner })
-                await this.controller.setMinimalApprovals(2,3, { from: owner })
-                const time = Number(await this.controller.returnTime())
-                const weekday = Number(await this.dateTime.getWeekday(time))
-                if (weekday === 0 || weekday === 6 || weekday === 5){
-                    await increaseTime(duration.days(3))
-                }
+                await this.controller.setMintThresholds(10*10**18,100*10**18,1000*10**18, { from: owner })
+                await this.controller.setMintLimits(30*10**18,300*10**18,3000*10**18,{ from: owner })
             })
 
             it('non mintKey/owner cannot request mint', async function () {
@@ -120,21 +111,10 @@ contract('--Proxy With Controller--', function (accounts) {
                 const mintOperation = await this.controller.mintOperations(0)
                 assert.equal(mintOperation[0], oneHundred)
                 assert.equal(Number(mintOperation[1]), 10*10**18)
-                assert.equal(Number(mintOperation[4]), 0,"numberOfApprovals not 0")
+                assert.equal(Number(mintOperation[3]), 0,"numberOfApprovals not 0")
                 const mintOperationCount = await this.controller.mintOperationCount()
                 assert.equal(mintOperationCount, 1)
-            })
 
-            it('fails to mint when over the 24hour limit', async function () {
-                 await this.controller.requestMint(oneHundred, 20*10**18 , { from: mintKey })
-                 await assertRevert(this.controller.requestMint(oneHundred, 20*10**18 , { from: mintKey }))
-            })
-
-            it('manually reset 24hour limit', async function () {
-                await this.controller.requestMint(oneHundred, 20*10**18 , { from: mintKey })
-                await assertRevert(this.controller.requestMint(oneHundred, 20*10**18 , { from: mintKey }))
-                await this.controller.resetMintedToday({ from: owner })
-                await this.controller.requestMint(oneHundred, 20*10**18 , { from: mintKey })
             })
         })
     })

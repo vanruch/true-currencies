@@ -273,38 +273,38 @@ contract MultiSigOwner {
         _signOrExecute("claimOwnership"); 
     }
 
-    function setSmallMintThreshold(uint256 _threshold) external onlyOwner {
-        _signOrExecute("setSmallMintThreshold");
+    function setMintThresholds(uint256 _instant, uint256 _ratified, uint256 _jumbo) external onlyOwner {
+        _signOrExecute("setMintThresholds");
     }
 
-    function setMinimalApprovals(uint8 _smallMintApproval, uint8 _largeMintApproval) external onlyOwner {
-        _signOrExecute("setMinimalApprovals");
-    }
-
-    function setMintLimit(uint256 _limit) external onlyOwner {
+    function setMintLimits(uint256 _instant, uint256 _ratified, uint256 _jumbo) external onlyOwner {
         _signOrExecute("setMintLimit");
     }
 
-    function resetMintedToday() external onlyOwner {
-        _signOrExecute("resetMintedToday");
+    function refillInstantMintPool() external onlyOwner {
+        _signOrExecute("refillInstantMintPool");
     }
 
-    function setTimeZoneDiff(uint _hours) external onlyOwner {
-        _signOrExecute("setTimeZoneDiff");
+    function refillRatifiedMintPool() external onlyOwner {
+        _signOrExecute("refillRatifiedMintPool");
+    }
+
+    function refillJumboMintPool() external onlyOwner {
+        _signOrExecute("refillJumboMintPool");
     }
 
     function requestMint(address _to, uint256 _value) external onlyOwner {
         _signOrExecute("requestMint");
     }
 
-    function finalizeMint(uint256 _index) external onlyOwner {
-        _signOrExecute("finalizeMint");
-    }
-    
-    function approveMint(uint256 _index) external onlyOwner {
-        _signOrExecute("approveMint");
+    function instantMint(address _to, uint256 _value) external onlyOwner {
+        _signOrExecute("instantMint");
     }
 
+    function ratifyMint(uint256 _index, address _to, uint256 _value) external onlyOwner {
+        _signOrExecute("ratifyMint");
+    }
+    
     function revokeMint(uint256 _index) external onlyOwner {
         _signOrExecute("revokeMint");
     }
@@ -331,18 +331,6 @@ contract MultiSigOwner {
 
     function unpauseMint(uint _opIndex) external onlyOwner {
         _signOrExecute("unpauseMint"); 
-    }
-
-    function addHoliday(uint16 _year, uint8 _month, uint8 _day) external onlyOwner {
-        _signOrExecute("addHoliday"); 
-    }
-
-    function removeHoliday(uint _year, uint _month, uint _day) external onlyOwner {
-        _signOrExecute("removeHoliday"); 
-    }
-
-    function setDateTime(address _newContract) external onlyOwner {
-        _signOrExecute("setDateTime"); 
     }
 
     function setTrueUSD(TrueUSD _newContract) external onlyOwner {

@@ -6,7 +6,7 @@ import "./utilities/AddressUtils.sol";
 // This allows a token to treat transfer(0x0, value) as burn(value). This
 // is useful for users of standard wallet programs which have transfer
 // functionality built in but not the ability to burn.
-contract RedeemToken is AddressUtils, ModularPausableToken {
+contract RedeemToken is ModularPausableToken {
     
     //a burn address is any address with the last 10 or more bytes (20 characters) equal 0
     //for exmaple 0x1bf0f9fbc23fff3bb6bb00000000000000000000 is a burn address
@@ -14,9 +14,6 @@ contract RedeemToken is AddressUtils, ModularPausableToken {
     function transferAllArgs(address _from, address _to, uint256 _value) internal {
         if (_to == address(0)) {
             burnAllArgs(_from, _value, "");
-        } else if (shortenAddress(_to) == _to) {
-            super.transferAllArgs(_from, _to, _value);
-            burnAllArgs(_to, _value, "");
         } else {
             super.transferAllArgs(_from, _to, _value);
         }
