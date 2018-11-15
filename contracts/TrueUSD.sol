@@ -6,7 +6,6 @@ import "./BurnableTokenWithBounds.sol";
 import "./CompliantToken.sol";
 import "./TokenWithFees.sol";
 import "./RedeemToken.sol";
-import "./DepositToken.sol";
 
 // This is the top-level ERC20 contract, but most of the interesting functionality is
 // inherited - see the documentation on the corresponding contracts.
@@ -15,8 +14,7 @@ ModularPausableToken,
 BurnableTokenWithBounds, 
 CompliantToken, 
 TokenWithFees, 
-RedeemToken,
-DepositToken
+RedeemToken
 {
     using SafeMath for *;
 

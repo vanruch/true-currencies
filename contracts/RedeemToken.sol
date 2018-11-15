@@ -1,7 +1,6 @@
 pragma solidity ^0.4.23;
 
 import "./modularERC20/ModularPausableToken.sol";
-import "./utilities/AddressUtils.sol";
 
 // This allows a token to treat transfer(0x0, value) as burn(value). This
 // is useful for users of standard wallet programs which have transfer
