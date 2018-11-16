@@ -428,18 +428,41 @@ contract('MultisigOwner', function (accounts) {
 
         })
 
-        it('owner request and ratify mint', async function(){
-            await this.multisigOwner.requestMint(oneHundred, 10*10**18,  {from: owner1})
+        it('owner can instant mint', async function(){
+            await this.multisigOwner.instantMint(oneHundred, 10*10**18,  {from: owner1})
+            await this.multisigOwner.instantMint(oneHundred, 10*10**18, {from: owner2})
+            await assertBalance(this.token, oneHundred, 10*10**18)
+        })
+
+        it('owner can pause and unpause mint', async function(){
+            await this.multisigOwner.requestMint(oneHundred, 10*10**18, {from: owner1})
             await this.multisigOwner.requestMint(oneHundred, 10*10**18, {from: owner2})
+            await this.multisigOwner.pauseMint(0,  {from: owner1})
+            await this.multisigOwner.pauseMint(0,  {from: owner2})
             await this.multisigOwner.ratifyMint(0, oneHundred, 10*10**18,  {from: owner1})
-            await this.multisigOwner.ratifyMint(0, oneHundred, 10*10**18, {from: owner2})
+            await assertRevert(this.multisigOwner.ratifyMint(0, oneHundred, 10*10**18, {from: owner2}))
+            await this.multisigOwner.unPauseMint(0,  {from: owner1})
+            await this.multisigOwner.unPauseMint(0,  {from: owner2})
+            await this.multisigOwner.ratifyMint(0, oneHundred, 10*10**18,  {from: owner2})
+            await assertBalance(this.token, oneHundred, 10*10**18)
+        })
+
+        it('owner invalidate past request mints', async function(){
+            await this.multisigOwner.requestMint(oneHundred, 10*10**18, {from: owner1})
+            await this.multisigOwner.requestMint(oneHundred, 10*10**18, {from: owner2})
+            await this.multisigOwner.requestMint(oneHundred, 20*10**18, {from: owner1})
+            await this.multisigOwner.requestMint(oneHundred, 20*10**18, {from: owner2})
+            await this.multisigOwner.invalidateAllPendingMints({from: owner1})
+            await this.multisigOwner.invalidateAllPendingMints({from: owner2})
+            await this.multisigOwner.ratifyMint(0, oneHundred, 10*10**18,  {from: owner1})
+            await assertRevert(this.multisigOwner.ratifyMint(0, oneHundred, 10*10**18, {from: owner2}))
+            await assertBalance(this.token, oneHundred, 0)
         })
 
         it('owner request and ratify a large mint', async function(){
-            await this.multisigOwner.requestMint(oneHundred, 30000*10**18,  {from: owner1})
-            await this.multisigOwner.requestMint(oneHundred, 30000*10**18, {from: owner2})
             await this.multisigOwner.ratifyMint(0, oneHundred, 30000*10**18,  {from: owner1})
             await this.multisigOwner.ratifyMint(0, oneHundred, 30000*10**18, {from: owner2})
+            await assertBalance(this.token, oneHundred, 10*10**18)
         })
 
         it('owners can revoke mint', async function(){

@@ -256,8 +256,9 @@ contract TimeLockedController {
         emit RequestMint(_to, _value, mintOperations.length, msg.sender);
     }
 
-    function instantMint(address _to, uint256 _value) mintNotPaused onlyMintKeyOrOwner {
-        require(_value <= instantMintPool && _value <= instantMintThreshold);
+    function instantMint(address _to, uint256 _value) external mintNotPaused onlyMintKeyOrOwner {
+        require(_value <= instantMintThreshold, "over the instant mint threshold");
+        require(_value <= instantMintPool, "instant mint pool is dry");
         instantMintPool = instantMintPool.sub(_value);
         emit InstantMint(_to, _value, msg.sender);
         trueUSD.mint(_to, _value);
@@ -265,8 +266,8 @@ contract TimeLockedController {
 
     function ratifyMint(uint256 _index, address _to, uint256 _value) external mintNotPaused onlyMintRatifierOrOwner {
         MintOperation memory op = mintOperations[_index];
-        require(op.to == _to);
-        require(op.value == _value);
+        require(op.to == _to, "to address does not match");
+        require(op.value == _value, "amount does not match");
         require(!mintOperations[_index].approved[msg.sender], "already approved");
         mintOperations[_index].approved[msg.sender] = true;
         mintOperations[_index].numberOfApproval = mintOperations[_index].numberOfApproval.add(1);

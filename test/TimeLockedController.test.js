@@ -594,6 +594,12 @@ contract('TimeLockedController', function (accounts) {
             })
         })
 
+        describe('fall back function', function(){
+            it('controller does not accept ether', function(){
+                await assertRevert(this.controller.sendTransaction({from: oneHundred, gas: 600000, value: 10}));
+            })
+        })
+
         describe('requestReclaimEther', function () {
             it('reclaims ether', async function () {
                 const forceEther = await ForceEther.new({ from: oneHundred, value: "10000000000000000000" })
